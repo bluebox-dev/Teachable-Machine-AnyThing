@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Commands</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css?v=5">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6.5v11M12 3.5v17M16 7.5v9M20 10v4"/></svg>
+      </div>
+      <div>
+        <h1>Voice Commands</h1>
+        <p>ฟังคำสั่งเสียงจากไมโครโฟนหรือไฟล์เสียง</p>
+      </div>
+    </div>
+    <div id="status-pill" class="status-pill" data-state="loading" role="status">
+      <span class="status-dot"></span><span id="status-text">กำลังโหลดโมเดล</span>
+    </div>
+    <button id="theme-toggle" class="icon-button" type="button" aria-label="สลับโหมดสว่างและมืด">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </header>
+
+  <main class="layout">
+    <div class="main-col">
+    <section class="card" aria-label="ข้อมูลเข้า">
+      <div class="stage-head">
+        <div class="segmented" role="group" aria-label="ชนิดข้อมูลเข้า">
+          <button id="tab-mic" type="button" aria-pressed="true">ไมโครโฟน</button>
+          <button id="tab-file" type="button" aria-pressed="false">อัปโหลดไฟล์เสียง</button>
+        </div>
+      </div>
+
+      <div id="viewport" class="viewport audio">
+        <div class="spectro">
+          <canvas id="spectrogram" width="430" height="232" aria-label="สเปกโตรแกรมของเสียง"></canvas>
+          <div class="axis" aria-hidden="true"><span>5 kHz</span><span>2.5 kHz</span><span>0</span></div>
+        </div>
+        <div id="empty" class="empty">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          <strong id="empty-title">พร้อมฟัง</strong>
+          <span id="empty-text">กดปุ่มเริ่มฟังด้านล่าง แล้วลองพูดคำที่เทรนไว้</span>
+        </div>
+        <div id="listening" class="listening" hidden><i></i>กำลังฟัง</div>
+      </div>
+
+      <div id="mic-panel" class="controls">
+        <div class="slider">
+          <label for="threshold">ความมั่นใจขั้นต่ำ <output id="threshold-value">0.75</output></label>
+          <input id="threshold" type="range" min="0.5" max="0.95" step="0.05" value="0.75">
+        </div>
+        <div class="slider">
+          <label for="overlap">Overlap factor <output id="overlap-value">0.50</output></label>
+          <input id="overlap" type="range" min="0" max="0.75" step="0.25" value="0.5">
+        </div>
+        <button id="toggle-mic" type="button" class="primary" disabled>เริ่มฟัง</button>
+      </div>
+
+      <div id="file-panel" class="controls" hidden>
+        <p class="hint" style="flex: 1 1 200px">เลือกได้หลายไฟล์ หรือลากไฟล์มาวางในกรอบด้านบน เช่น ไฟล์จากโฟลเดอร์ Data-Test</p>
+        <label class="primary" for="audio-file" style="cursor: pointer">เลือกไฟล์เสียง</label>
+        <input id="audio-file" class="visually-hidden" type="file" accept="audio/*" multiple disabled>
+      </div>
+      <audio id="player" controls hidden></audio>
+    </section>
+
+    <section class="card card-body" aria-label="ประวัติ">
+      <p class="eyebrow">ประวัติล่าสุด</p>
+      <p id="history-empty" class="history-empty">ยังไม่มีคำที่ตรวจพบ</p>
+      <ol id="history" class="history"></ol>
+    </section>
+    </div>
+
+    <div class="side">
+      <section class="card card-body" aria-label="ผลลัพธ์">
+        <p class="eyebrow">ผลลัพธ์</p>
+        <div class="result-head" aria-live="polite">
+          <p id="top-label" class="top-label waiting">ยังไม่มีผล</p>
+          <span id="top-score" class="top-score"></span>
+        </div>
+        <div id="bars"></div>
+      </section>
+
+      <section class="card card-body" aria-label="โมเดล">
+        <p class="eyebrow">โมเดล</p>
+        <div class="segmented full" role="group" aria-label="แหล่งที่มาของโมเดล">
+          <button type="button" data-source="builtin" aria-pressed="true">ในโปรเจกต์</button>
+          <button type="button" data-source="url" aria-pressed="false">ลิงก์</button>
+          <button type="button" data-source="files" aria-pressed="false">ไฟล์</button>
+        </div>
+        <div class="model-fields">
+          <div id="builtin-field">
+            <label class="visually-hidden" for="builtin-model">โมเดลในโปรเจกต์</label>
+            <select id="builtin-model"></select>
+          </div>
+          <div id="url-field" hidden>
+            <label class="visually-hidden" for="model-url">ลิงก์โมเดล</label>
+            <input id="model-url" type="url" placeholder="https://teachablemachine.withgoogle.com/models/xxxx/">
+          </div>
+          <label id="files-field" class="file-pick" hidden>
+            <input id="model-files" class="visually-hidden" type="file" accept=".json,.bin" multiple>
+            <span id="model-files-text">เลือก model.json, metadata.json และ weights.bin พร้อมกัน</span>
+          </label>
+          <button id="load-model" class="secondary block" type="button">ใช้โมเดลนี้</button>
+        </div>
+        <p id="model-message" class="model-message"></p>
+      </section>
+    </div>
+  </main>
+
+  <script src="app.js?v=3"></script>
+</body>
+</html>

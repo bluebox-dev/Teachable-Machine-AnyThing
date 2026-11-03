@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=7">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js"></script>
 </head>
@@ -92,10 +92,11 @@
           <div id="url-field" hidden>
             <label class="visually-hidden" for="model-url">ลิงก์โมเดล</label>
             <input id="model-url" type="url" placeholder="https://teachablemachine.withgoogle.com/models/xxxx/">
+            <p class="hint link-hint">วางลิงก์แล้วโมเดลจะเปลี่ยนให้ทันที หรือกด Enter</p>
           </div>
           <label id="files-field" class="file-pick" hidden>
             <input id="model-files" class="visually-hidden" type="file" accept=".json,.bin" multiple>
-            <span id="model-files-text">เลือก model.json, metadata.json และ weights.bin พร้อมกัน</span>
+            <span id="model-files-text">เลือก model.json, metadata.json และไฟล์ .bin พร้อมกัน</span>
           </label>
           <button id="load-model" class="secondary block" type="button">ใช้โมเดลนี้</button>
         </div>
@@ -104,6 +105,6 @@
     </div>
   </main>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

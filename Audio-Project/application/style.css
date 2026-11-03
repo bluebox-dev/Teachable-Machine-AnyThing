@@ -265,6 +265,7 @@ input[type="url"]::placeholder { color: var(--muted); }
 .block { width: 100%; }
 
 .hint { margin: 0; color: var(--muted); font-size: 13px; }
+.link-hint { margin-top: 6px; }
 
 /* ผลลัพธ์ */
 .result-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
@@ -378,3 +379,7 @@ audio { display: block; width: calc(100% - 28px); height: 40px; margin: 0 14px 1
   [aria-label="โมเดล"] { order: 3; }
 }
 .main-col { display: grid; gap: 18px; min-width: 0; }
+
+/* ชื่อคลาสยาวต้องไม่ดันหน้าเว็บให้ล้นจอ */
+.result-head > *, .bar-head span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.model-message { overflow-wrap: anywhere; }

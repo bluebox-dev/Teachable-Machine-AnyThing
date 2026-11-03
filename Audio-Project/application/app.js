@@ -4,6 +4,9 @@ const BUILT_IN_MODELS = [
 ];
 const BACKGROUND_LABELS = ['Background Noise', '_background_noise_'];
 const HISTORY_LIMIT = 30;
+const LINK_KEY = 'model-link';
+const RELEASE_DELAY_MS = 2000;
+const REPEAT_MS = 1000; // หนึ่งคำอาจถูกจับได้หลายช่วงเมื่อใช้ overlap จึงไม่บันทึกคำเดิมซ้ำภายในเวลานี้
 
 // ค่าเดียวกับที่ Teachable Machine ใช้สร้างสเปกโตรแกรมตอนเทรน
 const SAMPLE_RATE = 44100;
@@ -19,6 +22,12 @@ let recognizer = null;
 let labels = [];
 let listening = false;
 let source = 'builtin';
+let requestedKey = null;
+let loadRequest = 0;
+let keepSavedLink = false;
+let lastWord = null;
+let lastWordTime = 0;
+let renderEpoch = 0;
 let barRows = [];
 
 function initTheme() {
@@ -61,7 +70,8 @@ function resetStage() {
   }
 }
 
-function setSource(next) {
+function showSource(next) {
+  if (next === source) return;
   source = next;
   document.querySelectorAll('[data-source]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.source === next));
@@ -74,9 +84,15 @@ function setSource(next) {
 
 // รับลิงก์ได้ทั้งแบบมีและไม่มี / ท้ายลิงก์ และตัด query ออก
 function normalizeModelUrl(text) {
-  const url = new URL(text.trim());
+  let url;
+  try {
+    url = new URL(text.trim());
+  } catch (err) {
+    throw new Error('ลิงก์ไม่ถูกต้อง ให้วางลิงก์เต็มจาก Teachable Machine');
+  }
   url.search = '';
   url.hash = '';
+  url.pathname = url.pathname.replace(/\/(model\.json|metadata\.json|weights\.bin)$/, '/');
   return url.href.endsWith('/') ? url.href : `${url.href}/`;
 }
 
@@ -87,7 +103,7 @@ async function createRecognizerFromFiles(fileList) {
   const metadataFile = find('metadata.json');
   const weightsFile = files.find((f) => f.name.toLowerCase().endsWith('.bin'));
   if (!modelFile || !metadataFile || !weightsFile) {
-    throw new Error('ต้องเลือกครบ 3 ไฟล์: model.json, metadata.json และ weights.bin');
+    throw new Error('ต้องเลือกครบ 3 ไฟล์: model.json, metadata.json และไฟล์ .bin');
   }
   const metadata = JSON.parse(await metadataFile.text());
   checkModelType(metadata);
@@ -101,12 +117,17 @@ function checkModelType(metadata) {
   }
 }
 
-async function createRecognizerFromBase(base) {
+async function createRecognizerFromBase(base, query = '') {
   const absolute = new URL(base, window.location.href).href;
-  const response = await fetch(`${absolute}metadata.json`);
-  if (!response.ok) throw new Error(`ไม่พบไฟล์ ${absolute}metadata.json`);
+  let response;
+  try {
+    response = await fetch(`${absolute}metadata.json${query}`);
+  } catch (err) {
+    throw new Error('เชื่อมต่อลิงก์นี้ไม่ได้ ตรวจสอบอินเทอร์เน็ตและลิงก์อีกครั้ง');
+  }
+  if (!response.ok) throw new Error('ไม่พบโมเดลที่ลิงก์นี้ ตรวจสอบว่าคัดลอกลิงก์มาครบ');
   checkModelType(await response.json());
-  return speechCommands.create('BROWSER_FFT', undefined, `${absolute}model.json`, `${absolute}metadata.json`);
+  return speechCommands.create('BROWSER_FFT', undefined, `${absolute}model.json${query}`, `${absolute}metadata.json${query}`);
 }
 
 function buildBars() {
@@ -131,8 +152,77 @@ function buildBars() {
   $('bars').replaceChildren(...barRows.map((r) => r.row));
 }
 
+// คีย์ของโมเดลที่เลือกอยู่ ใช้กันการโหลดซ้ำเมื่อเหตุการณ์เกิดติดกัน
+function selectionKey() {
+  if (source === 'url') return `url:${$('model-url').value.trim()}`;
+  if (source === 'files') {
+    return `files:${Array.from($('model-files').files).map((f) => `${f.name}:${f.size}:${f.lastModified}`).join('|')}`;
+  }
+  return `builtin:${$('builtin-model').value}`;
+}
+
+// เปลี่ยนโมเดลทันทีเมื่อผู้ใช้เลือกโมเดลอื่น ปุ่ม "ใช้โมเดลนี้" ยังใช้โหลดซ้ำได้
+function loadIfChanged() {
+  if (source === 'url' && !$('model-url').value.trim()) return;
+  if (source === 'files' && !$('model-files').files.length) return;
+  if (selectionKey() !== requestedKey) loadModel();
+}
+
+function rememberLink() {
+  if (keepSavedLink) return;
+  try {
+    if (source === 'url') localStorage.setItem(LINK_KEY, $('model-url').value.trim());
+    else localStorage.removeItem(LINK_KEY);
+  } catch (err) { /* ไม่ต้องจำก็ได้ */ }
+}
+
+// เปิดแอปครั้งถัดไปด้วยลิงก์ล่าสุด ถ้าโหลดไม่ได้ให้กลับไปใช้โมเดลในโปรเจกต์
+function loadedFromLink() {
+  return Boolean(recognizer) && source === 'url' && requestedKey === selectionKey();
+}
+
+async function start() {
+  let saved = null;
+  try { saved = localStorage.getItem(LINK_KEY); } catch (err) { /* ใช้โมเดลในโปรเจกต์ */ }
+  if (saved) {
+    $('model-url').value = saved;
+    showSource('url');
+    await loadModel();
+    if (loadedFromLink()) return;
+    showSource('builtin');
+  }
+  // โหลดลิงก์ไม่ได้อาจเป็นเพราะเน็ตหลุดชั่วคราว จึงยังเก็บลิงก์ไว้ลองใหม่ตอนเปิดครั้งหน้า
+  keepSavedLink = Boolean(saved);
+  await loadModel();
+  keepSavedLink = false;
+  if (saved) setModelMessage('โหลดลิงก์ที่บันทึกไว้ไม่สำเร็จ จึงใช้โมเดลในโปรเจกต์แทน', true);
+}
+
+function releaseLayers(layersModel) {
+  const variables = layersModel.weights;
+  layersModel.dispose();
+  variables.forEach((variable) => {
+    try {
+      variable.dispose();
+    } catch (err) { /* ถูกคืนไปแล้วพร้อมโมเดล */ }
+  });
+}
+
+// คืนหน่วยความจำของโมเดลเก่า โดยรอให้งานที่กำลังประมวลผลจบก่อน
+function releaseModel(old) {
+  if (!old) return;
+  setTimeout(() => {
+    try {
+      if (old.model) releaseLayers(old.model);
+    } catch (err) {
+      console.warn(err);
+    }
+  }, RELEASE_DELAY_MS);
+}
+
 async function loadModel() {
-  await stopListening();
+  const request = ++loadRequest;
+  requestedKey = selectionKey();
   setStatus('loading', 'กำลังโหลดโมเดล');
   setModelMessage('');
   $('load-model').disabled = true;
@@ -143,27 +233,39 @@ async function loadModel() {
     } else if (source === 'url') {
       created = await createRecognizerFromBase(normalizeModelUrl($('model-url').value));
     } else {
-      created = await createRecognizerFromBase(BUILT_IN_MODELS[Number($('builtin-model').value)].path);
+      // เติม query เพื่อให้ได้ไฟล์ล่าสุดเมื่อมีการแทนที่ my-model
+      created = await createRecognizerFromBase(BUILT_IN_MODELS[Number($('builtin-model').value)].path, `?t=${Date.now()}`);
     }
     await created.ensureModelLoaded();
+    if (request !== loadRequest) {
+      releaseModel(created);
+      return;
+    }
+    await stopListening();
+    releaseModel(recognizer);
     recognizer = created;
     labels = recognizer.wordLabels();
     buildBars();
     setStatus('ready', `พร้อมใช้งาน · ${labels.length} คลาส`);
+    setModelMessage(`เปลี่ยนโมเดลแล้ว: ${labels.join(', ')}`);
+    rememberLink();
     $('toggle-mic').disabled = false;
     $('audio-file').disabled = false;
     clearResult();
     resetStage();
   } catch (err) {
+    if (request !== loadRequest) return;
     console.error(err);
     setStatus('error', 'โหลดโมเดลไม่สำเร็จ');
     setModelMessage(`${err.message}${recognizer ? ' (ยังใช้โมเดลเดิมอยู่)' : ''}`, true);
   } finally {
-    $('load-model').disabled = false;
+    if (request === loadRequest) $('load-model').disabled = false;
   }
 }
 
+// เพิ่มค่านี้เมื่อล้างผล เพื่อทิ้งงานที่ยังประมวลผลค้างจากก่อนหน้า
 function clearResult() {
+  renderEpoch += 1;
   $('top-label').textContent = 'ยังไม่มีผล';
   $('top-label').className = 'top-label waiting';
   $('top-score').textContent = '';
@@ -256,11 +358,20 @@ function drawSpectrogram(data, frameSize) {
 }
 
 async function startListening() {
-  await recognizer.listen((result) => {
+  const active = recognizer;
+  await active.listen((result) => {
+    if (active !== recognizer) return;
     const scores = Array.from(result.scores);
     const best = renderScores(scores);
     if (result.spectrogram) drawSpectrogram(result.spectrogram.data, result.spectrogram.frameSize);
-    if (!BACKGROUND_LABELS.includes(labels[best])) addHistory(labels[best], scores[best]);
+    const now = performance.now();
+    if (!BACKGROUND_LABELS.includes(labels[best]) && (labels[best] !== lastWord || now - lastWordTime >= REPEAT_MS)) {
+      addHistory(labels[best], scores[best]);
+    }
+    if (!BACKGROUND_LABELS.includes(labels[best])) {
+      lastWord = labels[best];
+      lastWordTime = now;
+    }
   }, {
     includeSpectrogram: true,
     probabilityThreshold: Number($('threshold').value),
@@ -343,6 +454,7 @@ function loudestWindow(frames) {
 }
 
 async function classifyFile(file) {
+  const epoch = renderEpoch;
   const flat = new Float32Array(FRAMES * BINS);
   loudestWindow(await spectrogramFromFile(file)).forEach((frame, i) => flat.set(frame, i * BINS));
   const normalized = tf.tidy(() => {
@@ -352,6 +464,7 @@ async function classifyFile(file) {
   });
   const result = await recognizer.recognize(normalized);
   normalized.dispose();
+  if (epoch !== renderEpoch) return null;
   const scores = Array.from(result.scores);
   drawSpectrogram(flat, BINS);
   const player = $('player');
@@ -370,7 +483,9 @@ async function classifyFiles(fileList) {
     return;
   }
   try {
-    for (const file of audioFiles) await classifyFile(file);
+    for (const file of audioFiles) {
+      if (!await classifyFile(file)) return;
+    }
   } catch (err) {
     console.error(err);
     showEmpty('อ่านไฟล์เสียงไม่ได้', err.message);
@@ -407,11 +522,24 @@ function initDropZone() {
 initTheme();
 BUILT_IN_MODELS.forEach((m, i) => $('builtin-model').add(new Option(m.name, String(i))));
 document.querySelectorAll('[data-source]').forEach((b) => {
-  b.addEventListener('click', () => setSource(b.dataset.source));
+  b.addEventListener('click', () => {
+    showSource(b.dataset.source);
+    loadIfChanged();
+  });
+});
+$('builtin-model').addEventListener('change', loadIfChanged);
+$('model-url').addEventListener('change', loadIfChanged);
+$('model-url').addEventListener('paste', () => setTimeout(loadIfChanged));
+$('model-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && $('model-url').value.trim()) {
+    e.preventDefault();
+    loadModel();
+  }
 });
 $('model-files').addEventListener('change', (e) => {
   const names = Array.from(e.target.files).map((f) => f.name).join(', ');
-  $('model-files-text').textContent = names || 'เลือก model.json, metadata.json และ weights.bin พร้อมกัน';
+  $('model-files-text').textContent = names || 'เลือก model.json, metadata.json และไฟล์ .bin พร้อมกัน';
+  loadIfChanged();
 });
 $('threshold').addEventListener('input', (e) => { $('threshold-value').textContent = Number(e.target.value).toFixed(2); });
 $('overlap').addEventListener('input', (e) => { $('overlap-value').textContent = Number(e.target.value).toFixed(2); });
@@ -424,4 +552,4 @@ $('audio-file').addEventListener('change', (e) => {
   e.target.value = '';
 });
 initDropZone();
-loadModel();
+start();

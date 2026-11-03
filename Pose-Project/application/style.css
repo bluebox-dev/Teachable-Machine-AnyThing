@@ -315,6 +315,7 @@ input[type="url"]::placeholder { color: var(--muted); }
 .block { width: 100%; }
 
 .hint { margin: 0; color: var(--muted); font-size: 13px; }
+.link-hint { margin-top: 6px; }
 
 /* แถบรูปที่อัปโหลด */
 .gallery { display: flex; gap: 8px; padding: 0 14px 14px; overflow-x: auto; }
@@ -419,3 +420,8 @@ input[type="url"]::placeholder { color: var(--muted); }
 .tile.top { border-color: var(--accent); }
 .tile.top .name { font-weight: 700; }
 .tile.top .value { color: var(--accent); font-weight: 600; }
+
+/* ชื่อคลาสยาวต้องไม่ดันหน้าเว็บให้ล้นจอ */
+.result-head > *, .bar-head span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.model-message { overflow-wrap: anywhere; }
+.live-caption span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

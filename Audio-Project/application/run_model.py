@@ -66,11 +66,14 @@ def read_model_files(model):
     text = str(model)
     if text.startswith(("http://", "https://")):
         base = text.split("?")[0].split("#")[0].rstrip("/")
+        for name in ("model.json", "metadata.json", "weights.bin"):
+            base = base[:-len(name) - 1] if base.endswith("/" + name) else base
         return lambda name: urllib.request.urlopen(f"{base}/{name}").read()
     path = resolve_path(text)
     if path.suffix.lower() == ".zip":
         archive = zipfile.ZipFile(path)
-        return archive.read
+        # ไฟล์โมเดลรุ่นใหม่อ้างชื่อแบบ ./model.weights.bin
+        return lambda name: archive.read(name[2:] if name.startswith("./") else name)
     return lambda name: (path / name).read_bytes()
 
 
@@ -165,7 +168,10 @@ def spectrogram(samples):
 
 def to_frames(samples):
     """สเปกโตรแกรมของไฟล์เสียง ก่อนเริ่มไฟล์ถือว่าเงียบ เหมือนตอนเล่นไฟล์ในเบราว์เซอร์"""
-    return spectrogram(np.concatenate([np.zeros(HOP, np.float32), samples]))
+    padded = np.concatenate([np.zeros(HOP, np.float32), samples])
+    if len(padded) < FFT_SIZE:
+        padded = np.pad(padded, (0, FFT_SIZE - len(padded)))
+    return spectrogram(padded)
 
 
 def loudest_window(frames):
@@ -210,7 +216,10 @@ def run_files(model, source, args):
         try:
             samples = read_wav(file)
         except (wave.Error, EOFError):
-            print(f"{file.name}: อ่านไม่ได้ สคริปต์นี้รองรับเฉพาะไฟล์ .wav")
+            print(f"{file.name}: อ่านไม่ได้ สคริปต์นี้รองรับเฉพาะไฟล์ .wav แบบ PCM")
+            continue
+        if not len(samples):
+            print(f"{file.name}: ไฟล์นี้ไม่มีเสียง")
             continue
         scores = model.predict(loudest_window(to_frames(samples)))
         best = int(np.argmax(scores))
@@ -268,8 +277,12 @@ def run_mic(model, args):
     def callback(data, frames, timing, status):
         blocks.put(data[:, 0].copy())
 
-    with sounddevice.InputStream(samplerate=SAMPLE_RATE, channels=1, blocksize=HOP, device=args.mic,
-                                 dtype="float32", callback=callback):
+    try:
+        stream = sounddevice.InputStream(samplerate=SAMPLE_RATE, channels=1, blocksize=HOP, device=args.mic,
+                                         dtype="float32", callback=callback)
+    except (sounddevice.PortAudioError, ValueError) as err:
+        sys.exit(f"เปิดไมโครโฟนไม่ได้ ({err}) ลองดูเลขไมค์ด้วย --list-mics หรืออนุญาตให้ Terminal ใช้ไมโครโฟน")
+    with stream:
         print("กำลังฟัง... กด Ctrl+C เพื่อออก")
         try:
             while True:
@@ -278,6 +291,14 @@ def run_mic(model, args):
                     on_result(*result)
         except KeyboardInterrupt:
             pass
+
+
+def load_model(source):
+    """โหลดโมเดล ถ้าไม่สำเร็จให้แจ้งสาเหตุแทนการแสดง Traceback"""
+    try:
+        return TeachableModel(source)
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as err:
+        sys.exit(f"โหลดโมเดลจาก {source} ไม่สำเร็จ ตรวจสอบว่าลิงก์ถูกต้อง และมี model.json, metadata.json, weights.bin ครบ ({err})")
 
 
 def main():
@@ -293,7 +314,7 @@ def main():
     if args.list_mics:
         print(import_sounddevice().query_devices())
         return
-    model = TeachableModel(args.model)
+    model = load_model(args.model)
     print(f"โหลดโมเดลแล้ว: {', '.join(model.labels)}")
     if args.source == "mic":
         run_mic(model, args)

@@ -56,11 +56,14 @@ def read_model_files(model):
     text = str(model)
     if text.startswith(("http://", "https://")):
         base = text.split("?")[0].split("#")[0].rstrip("/")
+        for name in ("model.json", "metadata.json", "weights.bin"):
+            base = base[:-len(name) - 1] if base.endswith("/" + name) else base
         return lambda name: urllib.request.urlopen(f"{base}/{name}").read()
     path = resolve_path(text)
     if path.suffix.lower() == ".zip":
         archive = zipfile.ZipFile(path)
-        return archive.read
+        # ไฟล์โมเดลรุ่นใหม่อ้างชื่อแบบ ./model.weights.bin
+        return lambda name: archive.read(name[2:] if name.startswith("./") else name)
     return lambda name: (path / name).read_bytes()
 
 
@@ -93,6 +96,8 @@ class TeachableModel:
         kind = "Audio" if "wordLabels" in self.metadata else self.metadata.get("packageName", "")
         if kind and kind != "@teachablemachine/image":
             sys.exit(f"โมเดลนี้เป็นชนิด {kind} สคริปต์นี้ใช้ได้เฉพาะโมเดล Image")
+        if self.metadata.get("grayscale"):
+            sys.exit("สคริปต์นี้ยังไม่รองรับโมเดลภาพขาวดำ (grayscale)")
         self.labels = self.metadata["labels"]
         self.size = self.metadata.get("imageSize", 224)
         self.topology = spec["modelTopology"]
@@ -191,6 +196,12 @@ def save_image(path, frame):
     cv2.imencode(path.suffix or ".jpg", frame)[1].tofile(str(path))
 
 
+def read_image(file):
+    # ใช้ fromfile เพื่อให้เปิดพาธภาษาไทยบน Windows ได้ และไฟล์ว่างจะคืน None
+    data = np.fromfile(str(file), np.uint8)
+    return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+
+
 def run_files(model, source, args):
     path = resolve_path(source)
     if path.is_dir():
@@ -203,7 +214,7 @@ def run_files(model, source, args):
     if not files or not files[0].exists():
         sys.exit(f"ไม่พบรูปภาพที่ {path}")
     for file in files:
-        frame = cv2.imdecode(np.fromfile(str(file), np.uint8), cv2.IMREAD_COLOR)
+        frame = read_image(file)
         if frame is None:
             print(f"{file.name}: อ่านไฟล์นี้ไม่ได้")
             continue
@@ -252,6 +263,14 @@ def run_webcam(model, args):
         cv2.destroyAllWindows()
 
 
+def load_model(source):
+    """โหลดโมเดล ถ้าไม่สำเร็จให้แจ้งสาเหตุแทนการแสดง Traceback"""
+    try:
+        return TeachableModel(source)
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as err:
+        sys.exit(f"โหลดโมเดลจาก {source} ไม่สำเร็จ ตรวจสอบว่าลิงก์ถูกต้อง และมี model.json, metadata.json, weights.bin ครบ ({err})")
+
+
 def main():
     parser = argparse.ArgumentParser(description="รันโมเดล Image จาก Teachable Machine")
     parser.add_argument("--model", default=MODEL, help="โฟลเดอร์, ไฟล์ .zip หรือลิงก์ของโมเดล")
@@ -261,7 +280,7 @@ def main():
     parser.add_argument("--no-window", dest="window", action="store_false", default=SHOW_WINDOW, help="ไม่เปิดหน้าต่างกล้อง")
     args = parser.parse_args()
 
-    model = TeachableModel(args.model)
+    model = load_model(args.model)
     print(f"โหลดโมเดลแล้ว: {', '.join(model.labels)}")
     if args.source == "webcam":
         run_webcam(model, args)

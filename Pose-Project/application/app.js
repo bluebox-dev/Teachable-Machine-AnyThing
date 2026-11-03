@@ -10,6 +10,8 @@ const MIN_PART_CONFIDENCE = 0.5;
 const SKELETON_COLOR = '#5fdcaa';
 const KEYPOINT_OUTLINE = '#04180f';
 const MAX_THUMBS = 24;
+const LINK_KEY = 'model-link';
+const RELEASE_DELAY_MS = 2000;
 
 const $ = (id) => document.getElementById(id);
 const ctx = $('canvas').getContext('2d');
@@ -18,6 +20,10 @@ let model = null;
 let webcam = null;
 let loopId = null;
 let source = 'builtin';
+let requestedKey = null;
+let loadRequest = 0;
+let keepSavedLink = false;
+let renderEpoch = 0;
 let tiles = [];
 let lastFrameTime = 0;
 let heldLabel = null;
@@ -81,7 +87,9 @@ function buildTiles(labels) {
   $('tiles').replaceChildren(...tiles.map((t) => t.tile));
 }
 
+// เพิ่มค่านี้เมื่อล้างผล เพื่อทิ้งงานที่ยังประมวลผลค้างจากก่อนหน้า
 function clearResult() {
+  renderEpoch += 1;
   $('top-label').textContent = 'ยังไม่มีผล';
   $('top-label').className = 'top-label waiting';
   $('top-score').textContent = '';
@@ -131,7 +139,8 @@ function renderPredictions(predictions, pose, trackHold) {
   return best;
 }
 
-function setSource(next) {
+function showSource(next) {
+  if (next === source) return;
   source = next;
   document.querySelectorAll('[data-source]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.source === next));
@@ -144,9 +153,15 @@ function setSource(next) {
 
 // รับลิงก์ได้ทั้งแบบมีและไม่มี / ท้ายลิงก์ และตัด query ออก
 function normalizeModelUrl(text) {
-  const url = new URL(text.trim());
+  let url;
+  try {
+    url = new URL(text.trim());
+  } catch (err) {
+    throw new Error('ลิงก์ไม่ถูกต้อง ให้วางลิงก์เต็มจาก Teachable Machine');
+  }
   url.search = '';
   url.hash = '';
+  url.pathname = url.pathname.replace(/\/(model\.json|metadata\.json|weights\.bin)$/, '/');
   return url.href.endsWith('/') ? url.href : `${url.href}/`;
 }
 
@@ -159,14 +174,19 @@ function pickModelFiles(fileList) {
     weights: files.find((f) => f.name.toLowerCase().endsWith('.bin')),
   };
   if (!picked.model || !picked.metadata || !picked.weights) {
-    throw new Error('ต้องเลือกครบ 3 ไฟล์: model.json, metadata.json และ weights.bin');
+    throw new Error('ต้องเลือกครบ 3 ไฟล์: model.json, metadata.json และไฟล์ .bin');
   }
   return picked;
 }
 
 async function fetchMetadata(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`ไม่พบไฟล์ ${url}`);
+  let response;
+  try {
+    response = await fetch(url);
+  } catch (err) {
+    throw new Error('เชื่อมต่อลิงก์นี้ไม่ได้ ตรวจสอบอินเทอร์เน็ตและลิงก์อีกครั้ง');
+  }
+  if (!response.ok) throw new Error('ไม่พบโมเดลที่ลิงก์นี้ ตรวจสอบว่าคัดลอกลิงก์มาครบ');
   return response.json();
 }
 
@@ -178,13 +198,83 @@ function checkModelType(metadata) {
   }
 }
 
-async function loadFromBase(base) {
-  checkModelType(await fetchMetadata(`${base}metadata.json`));
-  return tmPose.load(`${base}model.json`, `${base}metadata.json`);
+async function loadFromBase(base, query = '') {
+  checkModelType(await fetchMetadata(`${base}metadata.json${query}`));
+  return tmPose.load(`${base}model.json${query}`, `${base}metadata.json${query}`);
+}
+
+// คีย์ของโมเดลที่เลือกอยู่ ใช้กันการโหลดซ้ำเมื่อเหตุการณ์เกิดติดกัน
+function selectionKey() {
+  if (source === 'url') return `url:${$('model-url').value.trim()}`;
+  if (source === 'files') {
+    return `files:${Array.from($('model-files').files).map((f) => `${f.name}:${f.size}:${f.lastModified}`).join('|')}`;
+  }
+  return `builtin:${$('builtin-model').value}`;
+}
+
+// เปลี่ยนโมเดลทันทีเมื่อผู้ใช้เลือกโมเดลอื่น ปุ่ม "ใช้โมเดลนี้" ยังใช้โหลดซ้ำได้
+function loadIfChanged() {
+  if (source === 'url' && !$('model-url').value.trim()) return;
+  if (source === 'files' && !$('model-files').files.length) return;
+  if (selectionKey() !== requestedKey) loadModel();
+}
+
+function rememberLink() {
+  if (keepSavedLink) return;
+  try {
+    if (source === 'url') localStorage.setItem(LINK_KEY, $('model-url').value.trim());
+    else localStorage.removeItem(LINK_KEY);
+  } catch (err) { /* ไม่ต้องจำก็ได้ */ }
+}
+
+// เปิดแอปครั้งถัดไปด้วยลิงก์ล่าสุด ถ้าโหลดไม่ได้ให้กลับไปใช้โมเดลในโปรเจกต์
+function loadedFromLink() {
+  return Boolean(model) && source === 'url' && requestedKey === selectionKey();
+}
+
+async function start() {
+  let saved = null;
+  try { saved = localStorage.getItem(LINK_KEY); } catch (err) { /* ใช้โมเดลในโปรเจกต์ */ }
+  if (saved) {
+    $('model-url').value = saved;
+    showSource('url');
+    await loadModel();
+    if (loadedFromLink()) return;
+    showSource('builtin');
+  }
+  // โหลดลิงก์ไม่ได้อาจเป็นเพราะเน็ตหลุดชั่วคราว จึงยังเก็บลิงก์ไว้ลองใหม่ตอนเปิดครั้งหน้า
+  keepSavedLink = Boolean(saved);
+  await loadModel();
+  keepSavedLink = false;
+  if (saved) setModelMessage('โหลดลิงก์ที่บันทึกไว้ไม่สำเร็จ จึงใช้โมเดลในโปรเจกต์แทน', true);
+}
+
+function releaseLayers(layersModel) {
+  const variables = layersModel.weights;
+  layersModel.dispose();
+  variables.forEach((variable) => {
+    try {
+      variable.dispose();
+    } catch (err) { /* ถูกคืนไปแล้วพร้อมโมเดล */ }
+  });
+}
+
+// คืนหน่วยความจำของโมเดลเก่า โดยรอให้งานที่กำลังประมวลผลจบก่อน
+function releaseModel(old) {
+  if (!old) return;
+  setTimeout(() => {
+    try {
+      old.dispose();
+      releaseLayers(old.model);
+    } catch (err) {
+      console.warn(err);
+    }
+  }, RELEASE_DELAY_MS);
 }
 
 async function loadModel() {
-  stopWebcam();
+  const request = ++loadRequest;
+  requestedKey = selectionKey();
   setStatus('loading', 'กำลังโหลดโมเดล');
   setModelMessage('');
   $('load-model').disabled = true;
@@ -197,29 +287,42 @@ async function loadModel() {
       checkModelType(JSON.parse(await f.metadata.text()));
       loaded = await tmPose.loadFromFiles(f.model, f.weights, f.metadata);
     } else {
-      loaded = await loadFromBase(BUILT_IN_MODELS[Number($('builtin-model').value)].path);
+      // เติม query เพื่อให้ได้ไฟล์ล่าสุดเมื่อมีการแทนที่ my-model
+      loaded = await loadFromBase(BUILT_IN_MODELS[Number($('builtin-model').value)].path, `?t=${Date.now()}`);
     }
+    if (request !== loadRequest) {
+      releaseModel(loaded);
+      return;
+    }
+    stopWebcam();
+    releaseModel(model);
     model = loaded;
     const labels = model.getClassLabels();
     buildTiles(labels);
     setStatus('ready', `พร้อมใช้งาน · ${labels.length} คลาส`);
+    setModelMessage(`เปลี่ยนโมเดลแล้ว: ${labels.join(', ')}`);
+    rememberLink();
     $('toggle-webcam').disabled = false;
     $('image-file').disabled = false;
     clearResult();
     resetStage();
   } catch (err) {
+    if (request !== loadRequest) return;
     console.error(err);
     setStatus('error', 'โหลดโมเดลไม่สำเร็จ');
     setModelMessage(`${err.message}${model ? ' (ยังใช้โมเดลเดิมอยู่)' : ''}`, true);
   } finally {
-    $('load-model').disabled = false;
+    if (request === loadRequest) $('load-model').disabled = false;
   }
 }
 
 // ประเมินท่าทางบน canvas ต้นทาง แล้ววาดภาพกับโครงร่างลงบน canvas แสดงผล
 async function classifyCanvas(sourceCanvas, trackHold) {
-  const { pose, posenetOutput } = await model.estimatePose(sourceCanvas);
-  const predictions = await model.predict(posenetOutput);
+  const epoch = renderEpoch;
+  const current = model;
+  const { pose, posenetOutput } = await current.estimatePose(sourceCanvas);
+  const predictions = await current.predict(posenetOutput);
+  if (epoch !== renderEpoch) return null;
   ctx.drawImage(sourceCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
   if (pose && $('show-skeleton').checked) {
     const scale = CANVAS_SIZE / sourceCanvas.width;
@@ -254,7 +357,7 @@ async function startWebcam() {
   const loop = async () => {
     if (!webcam) return;
     webcam.update();
-    await classifyCanvas(webcam.canvas, true);
+    if (!await classifyCanvas(webcam.canvas, true)) return;
     const now = performance.now();
     $('fps').textContent = `${Math.round(1000 / Math.max(now - lastFrameTime, 1))} FPS`;
     lastFrameTime = now;
@@ -264,9 +367,14 @@ async function startWebcam() {
 }
 
 function stopWebcam() {
+  renderEpoch += 1;
   if (loopId) cancelAnimationFrame(loopId);
   loopId = null;
-  if (webcam) webcam.stop();
+  try {
+    if (webcam) webcam.stop();
+  } catch (err) {
+    console.warn(err); // กล้องยังเปิดไม่สำเร็จจึงยังไม่มีอะไรให้หยุด
+  }
   webcam = null;
   $('toggle-webcam').textContent = 'เปิดกล้อง';
 }
@@ -278,13 +386,25 @@ async function toggleWebcam() {
     resetStage();
     return;
   }
+  await openWebcam();
+}
+
+async function openWebcam() {
   try {
     await startWebcam();
   } catch (err) {
     console.error(err);
     stopWebcam();
+    clearResult();
     showEmpty('เปิดกล้องไม่ได้', 'ตรวจสอบว่าอนุญาตให้เบราว์เซอร์ใช้กล้องแล้ว และเปิดผ่าน localhost');
   }
+}
+
+// เปลี่ยนกล้องหรือการกลับภาพระหว่างเปิดกล้องอยู่ ต้องเริ่มกล้องใหม่จึงจะมีผล
+function restartWebcam() {
+  if (!webcam) return;
+  stopWebcam();
+  openWebcam();
 }
 
 function resetStage() {
@@ -336,7 +456,10 @@ function addThumb(file, best) {
   button.append(img, tag);
   button.addEventListener('click', () => {
     selectThumb(button);
-    classifyFile(file);
+    classifyFile(file).catch((err) => {
+      console.error(err);
+      showEmpty('อ่านรูปภาพไม่ได้', err.message);
+    });
   });
   $('gallery').prepend(button);
   while ($('gallery').children.length > MAX_THUMBS) $('gallery').lastChild.remove();
@@ -345,14 +468,18 @@ function addThumb(file, best) {
 }
 
 async function classifyFiles(fileList) {
-  const images = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+  const images = Array.from(fileList).filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|bmp|webp|gif)$/i.test(f.name));
   if (!model) return;
   if (!images.length) {
     showEmpty('ไฟล์นี้ไม่ใช่รูปภาพ', 'ลองเลือกไฟล์ .jpg หรือ .png');
     return;
   }
   try {
-    for (const file of images) addThumb(file, await classifyFile(file));
+    for (const file of images) {
+      const best = await classifyFile(file);
+      if (!best) return;
+      addThumb(file, best);
+    }
   } catch (err) {
     console.error(err);
     showEmpty('อ่านรูปภาพไม่ได้', err.message);
@@ -389,14 +516,29 @@ function initDropZone() {
 initTheme();
 BUILT_IN_MODELS.forEach((m, i) => $('builtin-model').add(new Option(m.name, String(i))));
 document.querySelectorAll('[data-source]').forEach((b) => {
-  b.addEventListener('click', () => setSource(b.dataset.source));
+  b.addEventListener('click', () => {
+    showSource(b.dataset.source);
+    loadIfChanged();
+  });
+});
+$('builtin-model').addEventListener('change', loadIfChanged);
+$('model-url').addEventListener('change', loadIfChanged);
+$('model-url').addEventListener('paste', () => setTimeout(loadIfChanged));
+$('model-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && $('model-url').value.trim()) {
+    e.preventDefault();
+    loadModel();
+  }
 });
 $('model-files').addEventListener('change', (e) => {
   const names = Array.from(e.target.files).map((f) => f.name).join(', ');
-  $('model-files-text').textContent = names || 'เลือก model.json, metadata.json และ weights.bin พร้อมกัน';
+  $('model-files-text').textContent = names || 'เลือก model.json, metadata.json และไฟล์ .bin พร้อมกัน';
+  loadIfChanged();
 });
 $('load-model').addEventListener('click', loadModel);
 $('toggle-webcam').addEventListener('click', toggleWebcam);
+$('flip').addEventListener('change', restartWebcam);
+$('camera-select').addEventListener('change', restartWebcam);
 $('tab-webcam').addEventListener('click', () => switchInput(true));
 $('tab-file').addEventListener('click', () => switchInput(false));
 $('image-file').addEventListener('change', (e) => {
@@ -404,4 +546,4 @@ $('image-file').addEventListener('change', (e) => {
   e.target.value = '';
 });
 initDropZone();
-loadModel();
+start();

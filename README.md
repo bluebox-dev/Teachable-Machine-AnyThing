@@ -11,7 +11,7 @@
 ![NumPy only](https://img.shields.io/badge/inference-NumPy-013243?logo=numpy&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-4b5563)
 
-[เริ่มใช้งาน](#เริ่มใช้งานใน-1-นาที) · [ดูแอป](#แอปทั้ง-3-ตัว) · [รันด้วย Python](#รันโมเดลด้วย-python) · [พัฒนาต่อ](#พัฒนาต่อ) · [แก้ปัญหา](#แก้ปัญหาที่พบบ่อย)
+[เริ่มใช้งาน](#เริ่มใช้งานใน-1-นาที) · [เปิดบน Colab](#เปิดแอปบน-google-colab) · [ดูแอป](#แอปทั้ง-3-ตัว) · [รันด้วย Python](#รันโมเดลด้วย-python) · [พัฒนาต่อ](#พัฒนาต่อ) · [แก้ปัญหา](#แก้ปัญหาที่พบบ่อย)
 
 </div>
 
@@ -70,6 +70,25 @@ bash install.sh python3.10
 
 บน Windows ใช้ `bash install.sh "py -3.10"` หรือ `install.bat 3.10` และไม่ควรคัดลอกโฟลเดอร์ `.venv` ข้ามเครื่อง ให้รันคำสั่งติดตั้งใหม่ในเครื่องนั้นแทน
 
+## เปิดแอปบน Google Colab
+
+ถ้าไม่อยากติดตั้งอะไรในเครื่อง เปิดแอปผ่าน Colab ได้ โดยแต่ละโปรเจกต์มี notebook ของตัวเอง
+
+| แอป | Notebook | เปิดใช้งาน |
+|---|---|---|
+| Image Classifier | [`Image-Classifier-Colab.ipynb`](Image-Project/Image-Classifier-Colab.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bluebox-dev/Teachable-Machine-AnyThing/blob/main/Image-Project/Image-Classifier-Colab.ipynb) |
+| Voice Commands | [`Voice-Commands-Colab.ipynb`](Audio-Project/Voice-Commands-Colab.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bluebox-dev/Teachable-Machine-AnyThing/blob/main/Audio-Project/Voice-Commands-Colab.ipynb) |
+| Pose Classifier | [`Pose-Classifier-Colab.ipynb`](Pose-Project/Pose-Classifier-Colab.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bluebox-dev/Teachable-Machine-AnyThing/blob/main/Pose-Project/Pose-Classifier-Colab.ipynb) |
+
+1. กดปุ่ม **Open in Colab** ของแอปที่ต้องการ แล้วลงชื่อเข้าใช้บัญชี Google
+2. กดปุ่ม ▶ ที่เซลล์โค้ด ถ้า Colab เตือนว่า notebook ไม่ได้สร้างโดย Google ให้กด **Run anyway**
+3. รอให้ notebook ดาวน์โหลด repo (ราว 170 MB) แอปจะแสดงใต้เซลล์นั้น
+
+ไม่ต้องใช้ GPU เพราะโมเดลทำงานในเบราว์เซอร์ Colab ทำหน้าที่ส่งไฟล์ของแอปเท่านั้น และกล้องกับไมค์ที่ใช้คือของเครื่องคุณ
+
+> [!NOTE]
+> Notebook จะ clone โค้ดจาก branch หลักของ repo นี้บน GitHub จึงเห็นเฉพาะสิ่งที่ push แล้ว ถ้า fork ไปพัฒนาต่อ ให้แก้ค่า `REPO_URL` ในเซลล์โค้ด
+
 ## แอปทั้ง 3 ตัว
 
 ทุกแอปเลือกโมเดลได้ 3 แบบ (ในโปรเจกต์ ลิงก์ หรืออัปโหลดไฟล์) โดยโมเดลจะเปลี่ยนทันทีที่เลือก และจำลิงก์ล่าสุดไว้ใช้ครั้งถัดไป รับข้อมูลจากกล้องหรือไมค์ ลากไฟล์มาวางได้ รองรับโหมดสว่าง/มืดและหน้าจอมือถือ และจะเตือนเมื่อเลือกโมเดลผิดชนิด
@@ -122,6 +141,7 @@ Teachable-Machine-AnyThing/
 │   ├── Data-Test/          # ข้อมูลทดสอบ
 │   ├── Model/              # โมเดลที่ export จาก Teachable Machine (.zip)
 │   ├── project.tm          # โปรเจกต์ที่เปิดซ้ำบน Teachable Machine ได้
+│   ├── Image-Classifier-Colab.ipynb  # เปิดแอปบน Google Colab (ชื่อไฟล์ตามแอปของโปรเจกต์นั้น)
 │   └── application/
 │       ├── index.html      # หน้าแอป
 │       ├── app.js          # การทำงานของแอป
@@ -392,6 +412,7 @@ print(dict(zip(model.labels, model.predict(frames))))
 | แอปเว็บกับไฟล์ทดสอบ | ✅ ทดสอบแล้ว |
 | แอปเว็บกับลิงก์โมเดลจริง | ✅ ทดสอบกับโมเดลสาธารณะบน Teachable Machine ครบ 3 ชนิด ทั้งการวางลิงก์ การรีเฟรช และการอัปโหลดไฟล์ |
 | แอปเว็บกับกล้องและไมค์ | ⚠️ ทดสอบด้วยสตรีมจำลอง ยังไม่ได้ลองกับอุปกรณ์จริง |
+| Notebook บน Colab | ⚠️ รันโค้ดของ notebook โดยจำลอง `google.colab` และเปิดแอปใน iframe ครบ 3 ตัวแล้ว ยังไม่ได้รันบน Colab จริง และยังไม่ได้ลองกล้องกับไมค์ผ่าน Colab |
 | ผล Python เทียบกับเว็บ | ✅ Image ตรงกันใน 4 หลัก, Audio ต่างไม่เกิน 0.9 จุดเปอร์เซ็นต์ และ Pose ตรงกันใน 4 หลักเมื่อใช้ไฟล์ PNG (ไฟล์ JPEG อาจต่างกันเพราะ Chrome กับ OpenCV ถอดรหัสไม่เหมือนกัน) |
 | `run_model.py` กับกล้องและไมค์ | ⚠️ ยังไม่ได้ทดสอบการจับภาพหรือเสียงจริง โดยไมค์เปิดได้ และเครื่องทดสอบไม่ได้อนุญาตกล้องให้ Terminal (Audio ทดสอบการตรวจคำแบบต่อเนื่องด้วยเสียงจากไฟล์) |
 | Linux และ Windows | ⚠️ ยังไม่ได้รันจริง ตรวจเฉพาะไวยากรณ์ของ `install.sh` และ `run.sh` |
@@ -400,6 +421,7 @@ print(dict(zip(model.labels, model.predict(frames))))
 
 - เว็บต้องต่ออินเทอร์เน็ตเพื่อโหลดไลบรารี ฟอนต์ และ PoseNet
 - กล้องและไมค์บนเว็บทำงานเฉพาะ `localhost` หรือ HTTPS จึงเปิดไฟล์ HTML ตรง ๆ ไม่ได้
+- บน Colab แอปแสดงได้เฉพาะในหน้า notebook ขณะ runtime ทำงานอยู่ จึงเปิดในแท็บอื่นหรือแชร์ลิงก์ให้คนอื่นไม่ได้
 - `run_model.py` ของ Audio อ่านได้เฉพาะไฟล์ `.wav` ส่วนแอปเว็บอ่านรูปแบบเสียงที่เบราว์เซอร์รองรับ
 - `run_model.py` รองรับเฉพาะโมเดลแบบ TensorFlow.js ยังไม่รองรับไฟล์ Keras (`.h5`)
 - ชื่อคลาสภาษาไทยในหน้าต่างกล้องของ Python จะแสดงเป็น `???` เพราะข้อจำกัดของ OpenCV แต่ใน Terminal และบนเว็บแสดงได้ปกติ
@@ -411,6 +433,9 @@ print(dict(zip(model.labels, model.predict(frames))))
 |---|---|
 | `ไม่พบ Python` | macOS: `brew install python` · Ubuntu: `sudo apt install python3 python3-venv` · Windows: `winget install Python.Python.3.12` |
 | เปิดกล้องหรือไมค์ไม่ได้บนเว็บ | กดอนุญาตในเบราว์เซอร์ และเปิดผ่าน `http://localhost:<พอร์ต>/` |
+| เปิดกล้องหรือไมค์ไม่ได้บน Colab | กดอนุญาตที่ไอคอนด้านซ้ายของแถบที่อยู่ในเบราว์เซอร์ แล้วรันเซลล์อีกครั้ง แนะนำให้ใช้ Google Chrome |
+| แอปบน Colab หายหรือขึ้นหน้าว่าง | Colab อาจตัดการเชื่อมต่อเมื่อไม่ได้ใช้งานนาน ให้รันเซลล์อีกครั้ง |
+| แอปบน Colab ถูกตัดขอบ | เพิ่มค่า `APP_HEIGHT` ในเซลล์โค้ด แล้วรันอีกครั้ง |
 | Python เปิดกล้องหรือไมค์ไม่ได้บน macOS | เปิด System Settings → Privacy & Security แล้วอนุญาตให้ Terminal ใช้กล้องและไมโครโฟน |
 | มีกล้องหลายตัวแล้วเปิดผิดตัว | ลอง `--camera 1` และบนเว็บเลือกจากรายการกล้อง |
 | `ไม่พบไลบรารีเสียงของระบบ` บน Linux | `sudo apt install libportaudio2` |
